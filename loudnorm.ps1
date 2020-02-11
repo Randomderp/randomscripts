@@ -1,41 +1,49 @@
+#!/usr/bin/powershell
+[CmdletBinding()]
 param(
-    [string]$i = 'm4a',
-    [string]$o = 'flac',
-    [int32]$jobs,
-    [switch]$h
+    [Parameter(
+        Mandatory = $true,
+        ValueFromPipeline = $true,
+        Position = 0,
+        HelpMessage = "Enter a file path."
+    )][Alias("i", "in")][string]$InputFile,
+    [Parameter(
+        Position = 1
+    )][Alias("o", "out")][string]$OutputFile = $InputFile.FullName.Replace($InputFile.Extension, ".flac"),
+    [switch]$Help = $false,
+    [hashtable]$FFmpegCustomOpts
 )
-
-if ($jobs -eq 0) {
-    if ($IsWindows) {
-        $jobs = (Get-CimInstance -ClassName 'Win32_ComputerSystem').NumberOfLogicalProcessors
-    } elseif ($IsMacOS) {
-        $jobs = sysctl -n hw.ncpu
-    } else {
-        $jobs = grep.exe -c ^processor /proc/cpuinfo
+begin {
+    if ($h) {
+        "Normalizes audio using ebu128"
+        "Requires ffmpeg to be in env:path"
+        "  -InputFile [$InputFile] for input file"
+        "  -OutputFile [$OutputFile] for output file"
+        exit
     }
 }
-
-if ($h) {
-    Write-Output "Normalizes audio using ebu128"
-    Write-Output "Requires ffmpeg to be in env:path"
-    Write-Output "Resamples audio to 48k"
-    Write-Output "  -i [$i] for input file extension"
-    Write-Output "  -o [$o] for output file extension"
-    Write-Output "  -jobs [$jobs] for the ammount of concurrent converts"
-    exit
+Process {
+    $DefaultFFmpegBeginOpts = @{
+        hide_banner = $null
+        nostats     = $null
+        y           = $null
+        i           = $path
+    }
+    Get-Item "$InputFile" | ForEach-Object {
+        $path = $_.FullName
+        $txt = $_.FullName.Replace($_.Extension, '.txt')
+        Write-Output "Currently processing $_"
+        ffmpeg @DefaultFFmpegBeginOpts -vn -af "loudnorm=I=-16:TP=-1.5:LRA=11:print_format=json" -f null - 2>&1 |
+            Out-File -Encoding UTF8 "$txt"
+        $input_json = Get-Content -Tail 12 "$txt" | ConvertFrom-Json
+        [double]$input_i = $input_json.input_i
+        [double]$input_tp = $input_json.input_tp
+        [double]$input_lra = $input_json.input_lra
+        [double]$input_thresh = $input_json.input_thresh
+        [double]$target_offset = $input_json.target_offset
+        ffmpeg @DefaultFFmpegBeginOpts -af "loudnorm=I=-16:TP=-1.5:LRA=11:measured_I='$input_i':measured_TP='$input_tp':measured_LRA='$input_lra':measured_thresh='$input_thresh':offset='$target_offset':linear=true:print_format=summary" @FFmpegCustomOpts "$OutputFile"
+    }
 }
-
-Get-ChildItem -Recurse -Filter "$('*.' + $i)" | ForEach-Object {
-    $path = $_.FullName
-    $txt = $_.FullName.Replace($_.Extension, '.txt')
-    $outfile = $_.FullName.Replace($_.Extension, "$('.' + $o)")
-    Get-Variable _
-    ffmpeg.exe -hide_banner -nostats -i $path -af "loudnorm=I=-16:TP=-1.5:LRA=11:print_format=json" -f null - 2>&1 | grep.exe "input\|target" | Out-File -Encoding UTF8 "$txt"
-    $input_i = Get-Content "$txt" | grep.exe "input_i" | grep.exe -Eo -- "[-+]?[0-9]+\.[0-9]+"
-    $input_tp = Get-Content "$txt" | grep.exe "input_tp" | grep.exe -Eo -- "[-+]?[0-9]+\.[0-9]+"
-    $input_lra = Get-Content "$txt" | grep.exe "input_lra" | grep.exe -Eo -- "[-+]?[0-9]+\.[0-9]+"
-    $input_thresh = Get-Content "$txt" | grep.exe "input_thresh" | grep.exe -Eo -- "[-+]?[0-9]+\.[0-9]+"
-    $target_offset = Get-Content "$txt" | grep.exe "target_offset" | grep.exe -Eo -- "[-+]?[0-9]+\.[0-9]+"
-    ffmpeg.exe -hide_banner -nostats -y -i $path -af "loudnorm=I=-16:TP=-1.5:LRA=11:measured_I='$input_i':measured_TP='$input_tp':measured_LRA='$input_lra':measured_thresh='$input_thresh':offset='$target_offset':linear=true:print_format=summary" -ar 48k $outfile
+end {
     Remove-Item "$txt"
 }
