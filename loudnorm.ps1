@@ -23,19 +23,15 @@ begin {
     }
 }
 Process {
-    $DefaultFFmpegBeginOpts = @{
-        hide_banner = $null
-        nostats     = $null
-        y           = $null
-        i           = $path
-    }
     Get-Item "$InputFile" | ForEach-Object {
-        $path = $_.FullName
-        $txt = $_.FullName.Replace($_.Extension, '.txt')
+        $DefaultFFmpegBeginOpts = @{
+            hide_banner = $null
+            nostats     = $null
+            y           = $null
+            i           = $_.FullName
+        }
         Write-Output "Currently processing $_"
-        ffmpeg @DefaultFFmpegBeginOpts -vn -af "loudnorm=I=-16:TP=-1.5:LRA=11:print_format=json" -f null - 2>&1 |
-            Out-File -Encoding UTF8 "$txt"
-        $input_json = Get-Content -Tail 12 "$txt" | ConvertFrom-Json
+        $input_json = ffmpeg @DefaultFFmpegBeginOpts -vn -af "loudnorm=I=-16:TP=-1.5:LRA=11:print_format=json" -f null - 2>&1 | Select-Object -Last 12 | ConvertFrom-Json
         [double]$input_i = $input_json.input_i
         [double]$input_tp = $input_json.input_tp
         [double]$input_lra = $input_json.input_lra
